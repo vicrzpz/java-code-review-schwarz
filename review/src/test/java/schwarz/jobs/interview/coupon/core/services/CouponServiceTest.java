@@ -26,14 +26,8 @@ import schwarz.jobs.interview.coupon.dto.Coupon;
 import schwarz.jobs.interview.coupon.dto.CouponRequest;
 import schwarz.jobs.interview.coupon.service.BasketService;
 import schwarz.jobs.interview.coupon.service.CouponService;
+import schwarz.jobs.interview.coupon.service.validator.imp.BasicCouponValidator;
 
-
-/**
- * Unit tests for the CouponService class.
- * This class contains tests to verify the behavior of the CouponService,
- * including coupon creation, applying coupons to baskets, and retrieving
- * multiple coupons.
- */
 @ExtendWith(SpringExtension.class)
 @ExtendWith(SpringExtension.class)
 public class CouponServiceTest {
@@ -47,13 +41,9 @@ public class CouponServiceTest {
     @Mock
     private BasketService basketService;
 
-    /**
-     * Test case for creating a coupon.
-     * <p>
-     * This test verifies that a coupon can be created and saved in the
-     * repository.
-     * </p>
-     */
+    @Mock
+    private BasicCouponValidator basicCouponValidator;
+
     @Test
     public void test_create_coupon() {
         Coupon coupon = Coupon.builder()
@@ -67,19 +57,9 @@ public class CouponServiceTest {
         verify(couponRepository, times(1)).save(any());
     }
 
-    /**
-     * Test case for applying a coupon to a basket.
-     * <p>
-     * This test verifies that a coupon can be applied to a basket if the
-     * basket's value meets the minimum requirements, and checks if the
-     * discount is applied correctly.
-     * </p>
-     *
-     * @throws IllegalDiscountException if the basket's value is below the
-     *                                  minimum required for the coupon.
-     */
+
     @Test
-    public void test_apply_coupon() {
+    public void test_Application_Successful() {
         final Basket firstBasket = Basket.builder()
                 .value(BigDecimal.valueOf(100))
                 .build();
@@ -90,57 +70,64 @@ public class CouponServiceTest {
                 .minBasketValue(BigDecimal.valueOf(50))
                 .build()));
 
-        when(basketService.applyDiscount(firstBasket, BigDecimal.TEN)).thenReturn(Optional.of(Basket.builder()
+        when(basketService.applyDiscount(firstBasket, BigDecimal.TEN)).thenReturn((Basket.builder()
                 .value(BigDecimal.valueOf(90))
                 .appliedDiscount(BigDecimal.TEN)
                 .applicationSuccessful(true)
                 .build()));
 
-        Optional<Basket> optionalBasket = couponService.applyCoupon(firstBasket, "1111");
+        Basket basket = couponService.applyCoupon(firstBasket, "1111");
 
-        assertThat(optionalBasket).isNotEmpty();
-        assertThat(optionalBasket).hasValueSatisfying(b -> {
-            assertThat(b.getAppliedDiscount()).isEqualTo(BigDecimal.TEN);
-            assertThat(b.isApplicationSuccessful()).isTrue();
-        });
+        assertThat(basket).isNotNull();
+        assertThat(basket.getAppliedDiscount()).isEqualTo(BigDecimal.TEN);
+        assertThat(basket.isApplicationSuccessful()).isTrue();
 
+    }
+
+    @Test
+    public void test_applyCoupon_SameValue() {
         final Basket secondBasket = Basket.builder()
                 .value(BigDecimal.valueOf(500))
                 .appliedDiscount(BigDecimal.TEN)
                 .applicationSuccessful(true)
                 .build();
+        when(couponRepository.findByCode("1111")).thenReturn(Optional.of(CouponEntity.builder()
+                .code("1111")
+                .discount(BigDecimal.TEN)
+                .minBasketValue(BigDecimal.valueOf(500))
+                .build()));
 
-        when(basketService.applyDiscount(secondBasket, BigDecimal.TEN)).thenReturn(Optional.of(Basket.builder()
-                .value(BigDecimal.valueOf(500))
+        when(basketService.applyDiscount(secondBasket, BigDecimal.TEN)).thenReturn((Basket.builder()
+                .value(BigDecimal.valueOf(490))
                 .appliedDiscount(BigDecimal.TEN)
                 .applicationSuccessful(true)
                 .build()));
 
-        optionalBasket = couponService.applyCoupon(secondBasket, "1111");
+       Basket basket = couponService.applyCoupon(secondBasket, "1111");
 
-        assertThat(optionalBasket).hasValueSatisfying(b -> {
-            assertThat(b).isEqualTo(secondBasket);
-            assertThat(b.isApplicationSuccessful()).isTrue();
+        assertThat(basket.getValue()).isEqualTo(secondBasket.getValue().subtract(BigDecimal.TEN));
+        assertThat(basket.isApplicationSuccessful()).isTrue();
+    }
 
-        });
-
+    @Test
+    public void test_applyCoupon_NegativeBasketValue() {
         final Basket thirdBasket = Basket.builder()
                 .value(BigDecimal.valueOf(-1))
                 .build();
 
+        when(couponRepository.findByCode("1111")).thenReturn(Optional.of(CouponEntity.builder()
+                .code("1111")
+                .discount(BigDecimal.TEN)
+                .minBasketValue(BigDecimal.valueOf(50))
+                .build()));
+
         assertThatThrownBy(() -> {
             couponService.applyCoupon(thirdBasket, "1111");
         }).isInstanceOf(IllegalDiscountException.class)
-          .hasMessage("Min basket value must be greater than: " +50);
+          .hasMessage("Min basket value must be greater than: 50 for coupon code: 1111");
     }
 
-    /**
-     * Test case for retrieving multiple coupons.
-     * <p>
-     * This test verifies that multiple coupons can be retrieved from the
-     * repository based on their codes.
-     * </p>
-     */
+
     @Test
     public void test_get_Coupons() {
 
@@ -160,10 +147,8 @@ public class CouponServiceTest {
                 .minBasketValue(BigDecimal.valueOf(50))
                 .build()));
 
-        List<CouponEntity> returnedCouponEntities = couponService.getCoupons(dto);
-
+        List<CouponEntity> returnedCouponEntities = couponService.findCouponsByCodes(dto);
         assertThat(returnedCouponEntities.get(0).getCode()).isEqualTo("1111");
-
         assertThat(returnedCouponEntities.get(1).getCode()).isEqualTo("1234");
     }
 }

@@ -7,16 +7,16 @@ import javax.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
 import schwarz.jobs.interview.coupon.exception.IllegalCouponException;
 import schwarz.jobs.interview.coupon.exception.IllegalDiscountException;
+import schwarz.jobs.interview.coupon.handler.ResponseHandler;
 import schwarz.jobs.interview.coupon.model.CouponEntity;
+import schwarz.jobs.interview.coupon.repository.CouponRepository;
 import schwarz.jobs.interview.coupon.service.CouponService;
 import schwarz.jobs.interview.coupon.dto.Basket;
 import schwarz.jobs.interview.coupon.dto.ApplicationRequest;
@@ -30,71 +30,54 @@ import schwarz.jobs.interview.coupon.dto.CouponRequest;
 public class CouponResource {
 
     private final CouponService couponService;
+    private final CouponRepository couponRepository;
+    private final ResponseHandler responseHandler;
 
-    /**
-     * Applies a coupon to the given basket.
-     *
-     * @param applicationRequest the request containing basket and coupon code
-     * @return the updated basket or an error response
-     */
-    @PostMapping("/apply")
-    public ResponseEntity<Basket> apply(@RequestBody @Valid ApplicationRequest applicationRequest) {
+    @PostMapping("/applyCoupon")
+    public ResponseEntity<Basket> applyCoupon(@RequestBody @Valid ApplicationRequest applicationRequest) {
         log.info("Applying coupon: {}", applicationRequest.getCode());
-
+        Basket basket = null;
         try {
-            Optional<Basket> optionalBasket = couponService.applyCoupon(
+            basket = couponService.applyCoupon(
                     applicationRequest.getBasket(), applicationRequest.getCode());
-
-            return optionalBasket
-                    .map(basketDTO -> {
-                        log.info("Coupon applied successfully");
-                        return ResponseEntity.ok(basketDTO);
-                    })
-                    .orElseGet(() -> {
-                        log.warn("Coupon application failed: Basket not found");
-                        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                                .body(applicationRequest.getBasket());
-                    });
+            log.info("Coupon applied successfully");
+            return responseHandler.handleSuccess(basket, "Coupon applied successfully");
         } catch (IllegalDiscountException e) {
             log.error("Error applying coupon: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
-        } catch (Exception e) {
-            log.error("Unexpected error applying coupon: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            return (ResponseEntity<Basket>) responseHandler.handleError
+                    (e.getMessage(), HttpStatus.BAD_REQUEST);
         }
     }
 
-    /**
-     * Creates a new coupon.
-     *
-     * @param couponDTO the coupon data
-     * @return the created coupon
-     */
-    @PostMapping("/create")
-    public ResponseEntity<CouponEntity> create(@RequestBody @Valid Coupon couponDTO) {
+    @PostMapping("/createCoupon")
+    public ResponseEntity<CouponEntity> createCoupon(@RequestBody @Valid Coupon couponDTO) {
+
+        Optional<CouponEntity> existingCoupon = couponRepository.findByCode(couponDTO.getCode());
+        if (existingCoupon.isPresent()) {
+            log.error("Coupon: {} already exists.", couponDTO.getCode());
+            return (ResponseEntity<CouponEntity>) responseHandler.handleError
+                    ("Coupon already exists", HttpStatus.BAD_REQUEST);
+        }
+        CouponEntity couponEntity = couponService.createCoupon(couponDTO);
+        log.info("Coupon created successfully with ID: {}", couponEntity.getId());
+        return responseHandler.handleSuccess(couponEntity, "Coupon created");
+    }
+
+    @GetMapping("/getCoupons")
+    public ResponseEntity<List<CouponEntity>> findCouponsByCodes(@RequestParam List<String> codes) {
+        CouponRequest couponRequest = new CouponRequest(codes);
         try {
-            CouponEntity couponEntity = couponService.createCoupon(couponDTO);
-            log.info("Coupon created successfully with ID: {}", couponEntity.getId());
-            return ResponseEntity.status(HttpStatus.CREATED).body(couponEntity);
-        } catch (IllegalCouponException e) { // Captura de excepción específica
-            log.error("Specific error creating coupon: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
-        } catch (Exception e) {
-            log.error("Unexpected error creating coupon: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            List<CouponEntity> couponEntities = couponService.findCouponsByCodes(couponRequest);
+            if (couponEntities.isEmpty()) {
+                return (ResponseEntity<List<CouponEntity>>) responseHandler.handleError
+                        ("Coupon/s not found.", HttpStatus.NOT_FOUND);
+            }
+            log.info("Retrieved {} coupons.", couponEntities.size());
+            return responseHandler.handleSuccess(couponEntities, "Coupon/s retrieved successfully");
+        } catch (IllegalCouponException e) {
+            log.info("List param empty.");
+            return (ResponseEntity<List<CouponEntity>>) responseHandler.handleError
+                    (e.getMessage(), HttpStatus.BAD_REQUEST);
         }
-    }
-
-    /**
-     * Retrieves a list of coupons based on the request.
-     *
-     * @param couponRequest the request containing coupon filters
-     * @return the list of coupons
-     */
-    @PostMapping("/coupons")
-    public ResponseEntity<List<CouponEntity>> getCoupons(@RequestBody @Valid CouponRequest couponRequest) {
-        List<CouponEntity> couponEntities = couponService.getCoupons(couponRequest);
-        log.info("Retrieved {} coupons", couponEntities.size());
-        return ResponseEntity.ok(couponEntities);
     }
 }
